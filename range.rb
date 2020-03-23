@@ -5,7 +5,7 @@ ra = $*.map { |a|
     Range.new *case b
     when /\A(-?\d+)\Z/
       Integer($1).then {|n| [n,n,false] }
-    when /\A(-?\d+)\.\.(\.)?(-?\d+)?\Z/
+    when /\A(-?\d+)(?:(?:\.{2}|-)|(\.{3}))(-?\d+)?\Z/
       [$1,$3].map{|s| s ? Integer(s) : nil} + [!!$2]
     when /\A\.\.(\.)?(-?\d+)\Z/
       [nil, Integer($2), !!$1]
