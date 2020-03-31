@@ -2,7 +2,7 @@
 
 require File.expand_path "~/ruby/simpleopts/simpleopts.rb"
 
-so = SimpleOpts.get("<rangexp...>", offset: 0)
+so = SimpleOpts.get("<rangexp...>", offset: 0, number: false)
 conv = proc { |n| Integer(n) - so.offset }
 
 ra = $*.map { |a|
@@ -45,6 +45,11 @@ else
   [STDIN, ra]
 end
 
+annotate = if so.number
+  proc { |l,i| "#{i + so.offset} #{l}" }
+else
+  proc { |l,i| l }
+end
 inp.each_with_index { |l,i|
-  ra.find { |r| r.include? i } and print l
+  ra.find { |r| r.include? i } and print annotate[l,i]
 }
