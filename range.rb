@@ -14,6 +14,8 @@ ra = $*.map { |a|
       [$1,$3].map{|s| s ? conv[s] : nil} + [!!$2]
     when /\A\.\.(\.)?(-?\d+)\Z/
       [nil, conv[$2], !!$1]
+    when /\A(-?\d+)>(-?\d+)/
+      conv[$1].then { |n| [n, n+Integer($2)].sort + [true] }
     else raise ArgumentError, "cannot interpret #{b.inspect} as range"
     end
   }
