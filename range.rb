@@ -14,8 +14,23 @@ ra = $*.map { |a|
       [$1,$3].map{|s| s ? conv[s] : nil} + [!!$2]
     when /\A\.\.(\.)?(-?\d+)\Z/
       [nil, conv[$2], !!$1]
-    when /\A(-?\d+)>(-?\d+)/
-      conv[$1].then { |n| [n, n+Integer($2)].sort + [true] }
+    when /\A(?<center>-?\d+)(?<dir1>[<>]|<>)(?<step1>-?\d+)(?:(?<dir2>[<>])(?<step2>-?\d+))?/
+      c = conv[$~[:center]]
+      steph = {?<=> 0, ?>=> 0}
+      [%i[dir1 step1], %i[dir2 step2]].each { |d,s|
+        d,s = [d,s].map { |k| $~[k] }
+        s or next
+        s = Integer(s)
+        steph.each_key { |q|
+         d.include? q and steph[q] = s
+        }
+      }
+      ends = [c - steph[?<], c + steph[?>]].sort.send(:map, &if c >= 0
+        proc { |v| [v,0].max }
+      else
+        proc { |v| [v,-1].min }
+      end)
+      ends + [false]
     else raise ArgumentError, "cannot interpret #{b.inspect} as range"
     end
   }
