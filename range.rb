@@ -3,13 +3,19 @@
 require File.expand_path "~/ruby/simpleopts/simpleopts.rb"
 
 SOpt = SimpleOpts::Opt
-so = SimpleOpts.get("<rangexp...>", offset: 0, number: false,
-                    grep: SOpt.new(default: nil, type: Regexp))
+so = SimpleOpts.get_args(["<rangexp...>",
+                          {offset: 0, number: false,
+                           grep: SOpt.new(default: nil, type: Regexp)}],
+                          leftover_opts_key: :rangexp_candidates)
 conv = proc { |n| Integer(n) - so.offset }
 
-argv_orig = $*.dup
+# Those args which were not recognized as options shall
+# be now attempted to parse as range expressions.
+# Along this, $* will be recreated to collect those args
+# which fail this turn of parsing.
+argv_remaining = so.rangexp_candidates + $*
 $*.clear
-ra = argv_orig.map { |a|
+ra = argv_remaining.map { |a|
   a.split(/\s*,\s*/).map { |b|
     Range.new *case b
     when /\A(-?\d+)\Z/
@@ -43,6 +49,12 @@ ra = argv_orig.map { |a|
     end
   }
 }.flatten.compact
+# $* holds now input files and truly invalid options.
+# Fire up the option parser once more. Now if it finds anything
+# that looks like an option we can let it freely pour its rage
+# over it.
+SimpleOpts.new.parse $*
+# If we got so far, $* has our input files.
 
 has_neg = ra.find { |r| %i[begin end].find {|m| (r.send(m)||0) < 0 }}
 
