@@ -16,6 +16,8 @@ ra = $*.map { |a|
       [$1,$3].map{|s| s ? conv[s] : nil} + [!!$2]
     when /\A\.\.(\.)?(-?\d+)\Z/
       [nil, conv[$2], !!$1]
+    when ".."
+      [0, nil]
     when /\A(?<center>-?\d+)(?<dir1>[<>]|<>)(?<step1>-?\d+)(?:(?<dir2>[<>])(?<step2>-?\d+))?/
       c = conv[$~[:center]]
       steph = {?<=> 0, ?>=> 0}
