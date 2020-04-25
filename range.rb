@@ -1,6 +1,6 @@
 #!/usr/bin/env ruby
 
-require File.expand_path "~/ruby/simpleopts/simpleopts.rb"
+require_relative "../simpleopts.rb"
 
 SOpt = SimpleOpts::Opt
 so = SimpleOpts.get_args(["<rangexp...>",
