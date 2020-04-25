@@ -4,7 +4,7 @@ require File.expand_path "~/ruby/simpleopts/simpleopts.rb"
 
 SOpt = SimpleOpts::Opt
 so = SimpleOpts.get_args(["<rangexp...>",
-                          {offset: 0, number: false,
+                          {offset: 0, number: false, final_newline: true,
                            grep: SOpt.new(default: nil, type: Regexp)}],
                           leftover_opts_key: :rangexp_candidates)
 conv = proc { |n| Integer(n) - so.offset }
@@ -70,8 +70,9 @@ annotate = if so.number
 else
   proc { |l,i| l }
 end
+writer = so.final_newline ? :puts : :print
 inp.each_with_index { |l,i|
   if ra.find { |r| r.include? i } or (so.grep and l =~ so.grep)
-    print annotate[l,i]
+    STDOUT.send writer, annotate[l,i]
   end
 }
