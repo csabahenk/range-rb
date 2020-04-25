@@ -5,7 +5,8 @@ require_relative "../simpleopts.rb"
 SOpt = SimpleOpts::Opt
 so = SimpleOpts.get_args(["<rangexp...>",
                           {offset: 0, number: false, final_newline: true,
-                           grep: SOpt.new(default: nil, type: Regexp)}],
+                           grep: SOpt.new(default: nil, type: Regexp),
+                           separator: " "}],
                           leftover_opts_key: :rangexp_candidates)
 conv = proc { |n| Integer(n) - so.offset }
 
@@ -66,7 +67,7 @@ else
 end
 
 annotate = if so.number
-  proc { |l,i| "#{i + so.offset} #{l}" }
+  proc { |l,i| "#{i + so.offset}#{so.separator}#{l}" }
 else
   proc { |l,i| l }
 end
