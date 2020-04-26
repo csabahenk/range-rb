@@ -4,9 +4,9 @@ require_relative "../simpleopts.rb"
 
 SOpt = SimpleOpts::Opt
 so = SimpleOpts.get_args(["<rangexp...>",
-                          {offset: 0, number: false, format: nil,
+                          {offset: 0, number: false, format: nil, header: nil,
                            grep: SOpt.new(default: nil, type: Regexp),
-                           final_newline: true}],
+                           final_newline: true, concat_args: false}],
                           leftover_opts_key: :rangexp_candidates)
 conv = proc { |n| Integer(n) - so.offset }
 
@@ -16,7 +16,7 @@ conv = proc { |n| Integer(n) - so.offset }
 # which fail this turn of parsing.
 argv_remaining = so.rangexp_candidates + $*
 $*.clear
-ra = argv_remaining.map { |a|
+ranges = argv_remaining.map { |a|
   a.split(/\s*,\s*/).map { |b|
     Range.new *case b
     when /\A(-?\d+)\Z/
@@ -65,35 +65,52 @@ if not format
     "%{line}"
   end
 end
-params = %i[line idx idx_raw match]
-begin
-  format % params.map { |pr| [pr, nil] }.to_h
+[['format', format,  %i[file line idx idx_raw match IDX IDX_raw fileno fileno_raw]],
+ ['header', so.header || "", %i[file fileno fileno_raw]]].each do |opt, fmt, prm|
+  fmt % prm.map { |pr| [pr, nil] }.to_h
 rescue KeyError
-  STDERR.puts "invalid parameters in '#{format}'",
-              "valid parameters are: #{params.join " "}"
+  STDERR.puts "invalid parameters in '--#{opt} #{fmt}'",
+              "valid parameters are: #{prm.join " "}"
   exit 1
 end
 
-has_neg = ra.find { |r| %i[begin end].find {|m| (r.send(m)||0) < 0 }}
-
-inp,ra = if has_neg
-  lines = $<.readlines
-  [lines, (0...lines.size).to_a.then {|a| ra.map {|r| a[r] }}]
-else
-  [$<, ra]
-end
-
+has_neg = ranges.find { |r| %i[begin end].find {|m| (r.send(m)||0) < 0 }}
 writer = so.final_newline ? :puts : :print
-inp.each_with_index { |l,i|
-  match = nil
-  if ra.find { |r| r.include? i } or (
-    if so.grep and l =~ so.grep
-      match = $&
-      true
+
+global_idx = 0
+(so.concat_args ? [$<] : ($*.empty? ? [?-] : $*)).each_with_index do |fn, fidx|
+  case fn
+  when $<
+    proc { |&cbk| cbk[fidx, '<cat>', $<] }
+  when ?-
+    proc { |&cbk| cbk[fidx, '<stdin>', STDIN] }
+  else
+    proc { |&cbk| open(fn) { |fh| cbk[fidx, fn, fh] } }
+  end.call do |fidx, fn, fh|
+    fileh = {file: fn, fileno: fidx + so.offset, fileno_raw: fidx}
+    so.header and puts so.header % fileh
+
+    inp,ra = if has_neg
+      lines = fh.readlines
+      [lines, (0...lines.size).to_a.then {|a| ranges.map {|r| a[r] }}]
     else
-      false
+      [fh, ranges]
     end
-  )
-    STDOUT.send writer, format % {line: l, idx: i + so.offset, idx_raw: i, match: match}
+
+    inp.each_with_index { |l,i|
+      match = nil
+      if ra.find { |r| r.include? i } or (
+        if so.grep and l =~ so.grep
+          match = $&
+          true
+        else
+          false
+        end
+      )
+        STDOUT.send writer, format % fileh.merge(line: l, idx: i + so.offset, idx_raw: i, match: match,
+                                                 IDX: global_idx + so.offset, IDX_raw: global_idx)
+      end
+      global_idx += 1
+    }
   end
-}
+end
