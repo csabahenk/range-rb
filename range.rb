@@ -4,9 +4,9 @@ require_relative "../simpleopts.rb"
 
 SOpt = SimpleOpts::Opt
 so = SimpleOpts.get_args(["<rangexp...>",
-                          {offset: 0, number: false, final_newline: true,
+                          {offset: 0, number: false, format: nil,
                            grep: SOpt.new(default: nil, type: Regexp),
-                           separator: " "}],
+                           final_newline: true}],
                           leftover_opts_key: :rangexp_candidates)
 conv = proc { |n| Integer(n) - so.offset }
 
@@ -57,6 +57,23 @@ ra = argv_remaining.map { |a|
 SimpleOpts.new.parse $*
 # If we got so far, $* has our input files.
 
+format = so.format
+if not format
+  format = if so.number
+    "%{idx} %{line}"
+  else
+    "%{line}"
+  end
+end
+params = %i[line idx idx_raw match]
+begin
+  format % params.map { |pr| [pr, nil] }.to_h
+rescue KeyError
+  STDERR.puts "invalid parameters in '#{format}'",
+              "valid parameters are: #{params.join " "}"
+  exit 1
+end
+
 has_neg = ra.find { |r| %i[begin end].find {|m| (r.send(m)||0) < 0 }}
 
 inp,ra = if has_neg
@@ -66,14 +83,17 @@ else
   [$<, ra]
 end
 
-annotate = if so.number
-  proc { |l,i| "#{i + so.offset}#{so.separator}#{l}" }
-else
-  proc { |l,i| l }
-end
 writer = so.final_newline ? :puts : :print
 inp.each_with_index { |l,i|
-  if ra.find { |r| r.include? i } or (so.grep and l =~ so.grep)
-    STDOUT.send writer, annotate[l,i]
+  match = nil
+  if ra.find { |r| r.include? i } or (
+    if so.grep and l =~ so.grep
+      match = $&
+      true
+    else
+      false
+    end
+  )
+    STDOUT.send writer, format % {line: l, idx: i + so.offset, idx_raw: i, match: match}
   end
 }
