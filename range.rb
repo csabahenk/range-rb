@@ -57,27 +57,32 @@ ranges = argv_remaining.map { |a|
 SimpleOpts.new.parse $*
 # If we got so far, $* has our input files.
 
+baseprm = {NL: "\n", TAB: "\t"}
+
 format = so.format
 if not format
   format = if so.number
-    "%{idx} %{line}"
+    "%{lno} %{line}"
   else
     "%{line}"
   end
 end
-[['format', format,  %i[file line idx idx_raw match IDX IDX_raw fileno fileno_raw]],
- ['header', so.header || "", %i[file fileno fileno_raw]]].each do |opt, fmt, prm|
-  fmt % prm.map { |pr| [pr, nil] }.to_h
+header_params = {path:"", file:"", fno:0, fno0:0, fno1:0}
+[['format', format, {line: "", match:""}.merge(header_params).merge(
+                     lno:0, lno0:0, lno1:0, LNO:0, LNO0:0, LNO1:0,
+                     idx:0, idx0:0, idx1:0, IDX:0, IDX0:0, IDX1:0)],
+ ['header', so.header || "", header_params]].each do |opt, fmt, prm|
+  fmt % baseprm.merge(prm)
 rescue KeyError
   STDERR.puts "invalid parameters in '--#{opt} #{fmt}'",
-              "valid parameters are: #{prm.join " "}"
+              "valid parameters are:", prm.merge(baseprm).keys
   exit 1
 end
 
 has_neg = ranges.find { |r| %i[begin end].find {|m| (r.send(m)||0) < 0 }}
 writer = so.final_newline ? :puts : :print
 
-global_idx = 0
+global_idx,global_lineno = 0,0
 (so.concat_args ? [$<] : ($*.empty? ? [?-] : $*)).each_with_index do |fn, fidx|
   case fn
   when $<
@@ -87,7 +92,7 @@ global_idx = 0
   else
     proc { |&cbk| open(fn) { |fh| cbk[fidx, fn, fh] } }
   end.call do |fidx, fn, fh|
-    fileh = {file: fn, fileno: fidx + so.offset, fileno_raw: fidx}
+    fileh = baseprm.merge(path: fn, file: File.basename(fn), fno: fidx + so.offset, fno0: fidx, fno1: fidx + 1)
     so.header and puts so.header % fileh
 
     inp,ra = if has_neg
@@ -97,20 +102,26 @@ global_idx = 0
       [fh, ranges]
     end
 
-    inp.each_with_index { |l,i|
+    idx = 0
+    inp.each_with_index { |line,lineno|
       match = nil
-      if ra.find { |r| r.include? i } or (
-        if so.grep and l =~ so.grep
+      if ra.find { |r| r.include? lineno } or (
+        if so.grep and line =~ so.grep
           match = $&
           true
         else
           false
         end
       )
-        STDOUT.send writer, format % fileh.merge(line: l, idx: i + so.offset, idx_raw: i, match: match,
-                                                 IDX: global_idx + so.offset, IDX_raw: global_idx)
+        STDOUT.send writer, format % fileh.merge(lno: lineno + so.offset, lno0: lineno, lno1: lineno + 1,
+                                                 LNO: global_lineno + so.offset, LNO0: global_lineno, LNO1: global_lineno + 1,
+                                                 idx: idx + so.offset, idx0: idx, idx1: idx + 1,
+                                                 IDX: global_idx + so.offset, IDX0: global_idx, IDX1: global_idx + 1,
+                                                 line: line, match: match)
+        global_idx +=1
+        idx += 1
       end
-      global_idx += 1
+      global_lineno += 1
     }
   end
 end
