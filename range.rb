@@ -113,11 +113,15 @@ global_idx,global_lineno = 0,0
           false
         end
       )
-        STDOUT.send writer, format % fileh.merge(lno: lineno + so.offset, lno0: lineno, lno1: lineno + 1,
-                                                 LNO: global_lineno + so.offset, LNO0: global_lineno, LNO1: global_lineno + 1,
-                                                 idx: idx + so.offset, idx0: idx, idx1: idx + 1,
-                                                 IDX: global_idx + so.offset, IDX0: global_idx, IDX1: global_idx + 1,
-                                                 line: line, match: match)
+        begin
+          STDOUT.send writer, format % fileh.merge(lno: lineno + so.offset, lno0: lineno, lno1: lineno + 1,
+                                                   LNO: global_lineno + so.offset, LNO0: global_lineno, LNO1: global_lineno + 1,
+                                                   idx: idx + so.offset, idx0: idx, idx1: idx + 1,
+                                                   IDX: global_idx + so.offset, IDX0: global_idx, IDX1: global_idx + 1,
+                                                   line: line, match: match)
+        rescue Errno::EPIPE
+          exit 0
+        end
         global_idx +=1
         idx += 1
       end
