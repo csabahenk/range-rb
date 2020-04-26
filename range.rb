@@ -57,7 +57,11 @@ ranges = argv_remaining.map { |a|
 SimpleOpts.new.parse $*
 # If we got so far, $* has our input files.
 
-baseprm = {NL: "\n", TAB: "\t"}
+BASE_PARAMS   = {NL: "\n", TAB: "\t"}
+HEADER_PARAMS = {path:"", file:"", fno:0, fno0:0, fno1:0}
+FORMAT_PARAMS = {line: "", match:""}.merge(HEADER_PARAMS).merge(
+                 lno:0, lno0:0, lno1:0, LNO:0, LNO0:0, LNO1:0,
+                 idx:0, idx0:0, idx1:0, IDX:0, IDX0:0, IDX1:0)
 
 format = so.format
 if not format
@@ -67,17 +71,42 @@ if not format
     "%{line}"
   end
 end
-header_params = {path:"", file:"", fno:0, fno0:0, fno1:0}
-[['format', format, {line: "", match:""}.merge(header_params).merge(
-                     lno:0, lno0:0, lno1:0, LNO:0, LNO0:0, LNO1:0,
-                     idx:0, idx0:0, idx1:0, IDX:0, IDX0:0, IDX1:0)],
- ['header', so.header || "", header_params]].each do |opt, fmt, prm|
-  fmt % baseprm.merge(prm)
+[['header', so.header || "", HEADER_PARAMS],
+  ['format', format, FORMAT_PARAMS]].each do |opt, fmt, prm|
+  fmt % prm.merge(BASE_PARAMS)
 rescue KeyError
   STDERR.puts "invalid parameters in '--#{opt} #{fmt}'",
-              "valid parameters are:", prm.merge(baseprm).keys
+              "valid parameters are:", prm.merge(BASE_PARAMS).keys
   exit 1
 end
+# find out which parameters occur in the given header
+# and format templates by omitting them one by one
+# from the parameters and see if this reduced mapping
+# is able to render the template; if not, the omitted
+# parameter is proven to occur.
+current_header_keys, current_format_keys = [
+  [so.header || "", HEADER_PARAMS],
+  [format, FORMAT_PARAMS]
+].map { |fmt, prm|
+  prmb = BASE_PARAMS.merge prm
+  prmb.each_key.with_object([]) { |k,aa|
+    prmk = prmb.dup
+    prmk.delete k
+    begin
+      fmt % prmk
+    rescue KeyError
+      aa << k
+    end
+  }
+}
+# keys that should be set upon visitng a file,
+# either because used in the header, or because
+# are used in line formatting but not changing
+# in the scope of the file
+current_hdr_fmt_keys = current_header_keys | (current_format_keys & HEADER_PARAMS.keys)
+# keys that are used in line formatting and are
+# chaging from line to line
+current_fmt_only_keys = current_format_keys - HEADER_PARAMS.keys
 
 has_neg = ranges.find { |r| %i[begin end].find {|m| (r.send(m)||0) < 0 }}
 writer = so.final_newline ? :puts : :print
@@ -92,8 +121,28 @@ global_idx,global_lineno = 0,0
   else
     proc { |&cbk| open(fn) { |fh| cbk[fidx, fn, fh] } }
   end.call do |fidx, fn, fh|
-    fileh = baseprm.merge(path: fn, file: File.basename(fn), fno: fidx + so.offset, fno0: fidx, fno1: fidx + 1)
-    so.header and puts so.header % fileh
+    formath = {}
+    current_hdr_fmt_keys.each { |k|
+      formath[k] = case k
+      when :NL
+        "\n"
+      when :TAB
+        "\t"
+      when :path
+        fn
+      when :file
+        File.basename(fn)
+      when :fno
+        fidx + so.offset
+      when :fno0
+        fidx
+      when :fno1
+        fidx + 1
+      else
+        raise "bad header key #{k.inspect}"
+      end
+    }
+    so.header and puts so.header % formath
 
     inp,ra = if has_neg
       lines = fh.readlines
@@ -113,12 +162,42 @@ global_idx,global_lineno = 0,0
           false
         end
       )
+        current_fmt_only_keys.each { |k|
+          formath[k] = case k
+          when :lno
+            lineno + so.offset
+          when :lno0
+            lineno
+          when :lno1
+            lineno + 1
+          when :LNO
+            global_lineno + so.offset
+          when :LNO0
+            global_lineno
+          when :LNO1
+            global_lineno + 1
+          when :idx
+            idx + so.offset
+          when :idx0
+            idx
+          when :idx1
+            idx + 1
+          when :IDX
+            global_idx + so.offset
+          when :IDX0
+            global_idx
+          when :IDX1
+            global_idx + 1
+          when :line
+            line
+          when :match
+            match
+          else
+            raise "bad format key #{k.inspect}"
+          end
+        }
         begin
-          STDOUT.send writer, format % fileh.merge(lno: lineno + so.offset, lno0: lineno, lno1: lineno + 1,
-                                                   LNO: global_lineno + so.offset, LNO0: global_lineno, LNO1: global_lineno + 1,
-                                                   idx: idx + so.offset, idx0: idx, idx1: idx + 1,
-                                                   IDX: global_idx + so.offset, IDX0: global_idx, IDX1: global_idx + 1,
-                                                   line: line, match: match)
+          STDOUT.send writer, format % formath
         rescue Errno::EPIPE
           exit 0
         end
