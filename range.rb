@@ -9,7 +9,7 @@ so = SimpleOpts.get_args(["<rangexp...>",
                            grep_after_context: SOpt.new(short: ?A, default: nil, type: Integer),
                            grep_before_context: SOpt.new(short: ?B, default: nil, type: Integer),
                            grep_context: SOpt.new(short: ?C, default: nil, type: Integer),
-                           final_newline: true, concat_args: false}],
+                           final_newline: true, concat_args: false, delimit_hunks: false}],
                           leftover_opts_key: :rangexp_candidates)
 conv = proc { |n| Integer(n) - so.offset }
 
@@ -204,16 +204,18 @@ global_idx,global_lineno = 0,0
     idx = 0
     lineno = 0
     matches = {}
+    last_lno = nil
     decide_line = proc do |ln, shift, &rangeval|
       if rangeval[]
+        lno = lineno - shift
         current_fmt_only_keys.each { |k|
           formath[k] = case k
           when :lno
-            lineno + so.offset - shift
+            lno + so.offset
           when :lno0
-            lineno - shift
+            lno
           when :lno1
-            lineno + 1 - shift
+            lno + 1
           when :LNO
             global_lineno + so.offset - shift
           when :LNO0
@@ -243,12 +245,16 @@ global_idx,global_lineno = 0,0
           end
         }
         begin
+          if so.delimit_hunks and last_lno and last_lno < lno - 1
+            puts "--"
+          end
           STDOUT.send writer, format % formath
         rescue Errno::EPIPE
           exit 0
         end
         global_idx +=1
         idx += 1
+        last_lno = lno
       end
     end
 
