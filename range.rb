@@ -108,7 +108,17 @@ current_hdr_fmt_keys = current_header_keys | (current_format_keys & HEADER_PARAM
 # chaging from line to line
 current_fmt_only_keys = current_format_keys - HEADER_PARAMS.keys
 
-has_neg = ranges.find { |r| %i[begin end].find {|m| (r.send(m)||0) < 0 }}
+neg_ranges,pos_ranges = ranges.partition { |r| %i[begin end].any? {|m| (r.send(m)||0) < 0 }}
+bottom = neg_ranges.map { |r| %i[begin end].map { |m| r.send m } }.flatten.compact.min
+pure_neg_ranges,mixed_ranges = neg_ranges.partition { |r| [r.begin||0, r.end||-1].all? { |v| v < 0 }}
+# Those ranges which begin positive (non-negative, to be precise) and end negative are
+# equivalent with the upper-open-ended positive range resulting by omitting their ends
+# *provided* we are *out of* the window. Collect these transformed ranges so that we
+# can match against them in such context.
+# NOTE Ruby >= 2.6 semantics (infinite ranges) is used.
+pseudo_pos_ranges = pos_ranges + mixed_ranges.select { |r| (r.begin||0) >= 0 }.map { |r| (r.begin||0).. }
+winsiz = (bottom||0).abs
+
 writer = so.final_newline ? :puts : :print
 
 global_idx,global_lineno = 0,0
@@ -144,18 +154,12 @@ global_idx,global_lineno = 0,0
     }
     so.header and puts so.header % formath
 
-    inp,ra = if has_neg
-      lines = fh.readlines
-      [lines, (0...lines.size).to_a.then {|a| ranges.map {|r| a[r] }}]
-    else
-      [fh, ranges]
-    end
-
     idx = 0
-    inp.each_with_index { |line,lineno|
+    lineno = 0
+    decide_line = proc do |ln, shift, &rangeval|
       match = nil
-      if ra.find { |r| r.include? lineno } or (
-        if so.grep and line =~ so.grep
+      if rangeval[] or (
+        if so.grep and ln =~ so.grep
           match = $&
           true
         else
@@ -165,17 +169,17 @@ global_idx,global_lineno = 0,0
         current_fmt_only_keys.each { |k|
           formath[k] = case k
           when :lno
-            lineno + so.offset
+            lineno + so.offset - shift
           when :lno0
-            lineno
+            lineno - shift
           when :lno1
-            lineno + 1
+            lineno + 1 - shift
           when :LNO
-            global_lineno + so.offset
+            global_lineno + so.offset - shift
           when :LNO0
-            global_lineno
+            global_lineno - shift
           when :LNO1
-            global_lineno + 1
+            global_lineno + 1 - shift
           when :idx
             idx + so.offset
           when :idx0
@@ -189,7 +193,7 @@ global_idx,global_lineno = 0,0
           when :IDX1
             global_idx + 1
           when :line
-            line
+            ln
           when :match
             match
           else
@@ -204,7 +208,46 @@ global_idx,global_lineno = 0,0
         global_idx +=1
         idx += 1
       end
+    end
+
+    window = []
+    fh.each_with_index { |line,_lineno|
+      lineno = _lineno
+      window << line
+      if window.size > winsiz
+        outline = window.shift
+        decide_line.call(outline, winsiz) {
+          pseudo_pos_ranges.any? { |r| r.include?(lineno - winsiz) }
+        }
+      end
       global_lineno += 1
     }
+
+    # exhausted file, now negative indices can be
+    # dereferenced in window, so decide about
+    # lines in window, considering all ranges.
+    window.each_with_index do |l,i|
+      neglno = i - window.size
+      shift = window.size - i - 1
+      lno = lineno - shift
+      decide_line.call(l, shift) do
+        pos_ranges.any? { |r| r.include? lno } or
+        pure_neg_ranges.any? { |r| r.include? neglno } or
+        # for mixed ranges we have to manually check
+        # relations as different index is matched against
+        # upper and lower boundary
+        mixed_ranges.any? { |r|
+          [[r.begin, :>=],
+           [r.end, r.exclude_end? ? :< : :<=]].all? { |e,rel|
+            if e
+              (e < 0 ? neglno : lno).send rel, e
+            else
+              true
+            end
+          }
+        }
+      end
+    end
+
   end
 end
