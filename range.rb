@@ -256,6 +256,7 @@ global_idx,global_lineno = 0,0
       last_lno = lno
     end
 
+    pos_ranges_current = pos_ranges.dup
     window = []
     fh.each_with_index { |line,_lineno|
       lineno = _lineno
@@ -264,7 +265,7 @@ global_idx,global_lineno = 0,0
         if rx[:rx] =~ line
           (matches[lineno]||=[]) << $&
           # inject ad hoc entry for match neighborhood
-          pos_ranges.insert 0, [lineno + rx[:down], 0].max..lineno + rx[:up]
+          pos_ranges_current.insert 0, [lineno + rx[:down], 0].max..lineno + rx[:up]
         end
       }
       if window.size > winsiz
@@ -273,7 +274,7 @@ global_idx,global_lineno = 0,0
         # line from line number of latest read line
         lno = lineno - winsiz
         if
-          pos_ranges.delete_if.with_object(false) { |r|
+          pos_ranges_current.delete_if.with_object(false) { |r|
             r.include? lno and break true
             # we passed over r, it can be dropped
             lno >= r.begin
@@ -282,7 +283,7 @@ global_idx,global_lineno = 0,0
           format_line[outline, winsiz]
         end
       end
-      [pos_ranges, neg_ranges, regexen].all? { |ra| ra.empty? } and break
+      [pos_ranges_current, neg_ranges, regexen].all? { |ra| ra.empty? } and break
       # drop match record for a line known to be out of the window
       matches.size > winsiz and matches.delete(matches.each_key.first)
       global_lineno += 1
@@ -295,9 +296,8 @@ global_idx,global_lineno = 0,0
       neglno = i - window.size
       shift = window.size - i - 1
       lno = lineno - shift
-      #decide_line.call(l, shift) do
       if
-        pos_ranges.any? { |r| r.include? lno } or
+        pos_ranges_current.any? { |r| r.include? lno } or
         pure_neg_ranges.any? { |r| r.include? neglno } or
         # for mixed ranges we have to manually check
         # relations as different index is matched against
