@@ -24,7 +24,7 @@ ranges = argv_remaining.map { |a|
     when /\A(-?\d+)(?:(?:\.{2}|-)|(\.{3}))(-?\d+)?\Z/
       [$1,$3].map{|s| s ? conv[s] : nil} + [!!$2]
     when /\A\.\.(\.)?(-?\d+)\Z/
-      [nil, conv[$2], !!$1]
+      [0, conv[$2], !!$1]
     when ".."
       [0, nil]
     when /\A(?<center>-?\d+)(?<dir1>[<>]|<>)(?<step1>-?\d+)(?:(?<dir2>[<>])(?<step2>-?\d+))?/
@@ -109,6 +109,11 @@ current_hdr_fmt_keys = current_header_keys | (current_format_keys & HEADER_PARAM
 current_fmt_only_keys = current_format_keys - HEADER_PARAMS.keys
 
 neg_ranges,pos_ranges = ranges.partition { |r| %i[begin end].any? {|m| (r.send(m)||0) < 0 }}
+pos_ranges.sort_by! { |r|
+  # first entry enforces unlimited ranges going to the end, second entry gets limited
+  # ranges sorted by their end value
+  [r.end ? 0 : 1, r.end || 0]
+}
 bottom = neg_ranges.map { |r| %i[begin end].map { |m| r.send m } }.flatten.compact.min
 pure_neg_ranges,mixed_ranges = neg_ranges.partition { |r| [r.begin||0, r.end||-1].all? { |v| v < 0 }}
 # Those ranges which begin positive (non-negative, to be precise) and end negative are
@@ -116,7 +121,7 @@ pure_neg_ranges,mixed_ranges = neg_ranges.partition { |r| [r.begin||0, r.end||-1
 # *provided* we are *out of* the window. Collect these transformed ranges so that we
 # can match against them in such context.
 # NOTE Ruby >= 2.6 semantics (infinite ranges) is used.
-pseudo_pos_ranges = pos_ranges + mixed_ranges.select { |r| (r.begin||0) >= 0 }.map { |r| (r.begin||0).. }
+pseudo_pos_ranges = mixed_ranges.select { |r| (r.begin||0) >= 0 }.map { |r| (r.begin||0).. }
 winsiz = (bottom||0).abs
 
 writer = so.final_newline ? :puts : :print
@@ -217,9 +222,17 @@ global_idx,global_lineno = 0,0
       if window.size > winsiz
         outline = window.shift
         decide_line.call(outline, winsiz) {
-          pseudo_pos_ranges.any? { |r| r.include?(lineno - winsiz) }
+          # calculating line number of currently processed
+          # line from line number of latest read line
+          lno = lineno - winsiz
+          pos_ranges.delete_if.with_object(false) { |r|
+            r.include? lno and break true
+            # we passed over r, it can be dropped
+            lno >= r.begin
+          } or pseudo_pos_ranges.any? { |r| r.include? lno }
         }
       end
+      [pos_ranges, neg_ranges].all? { |ra| ra.empty? } and break
       global_lineno += 1
     }
 
