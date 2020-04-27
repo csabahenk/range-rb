@@ -205,57 +205,55 @@ global_idx,global_lineno = 0,0
     lineno = 0
     matches = {}
     last_lno = nil
-    decide_line = proc do |ln, shift, &rangeval|
-      if rangeval[]
-        lno = lineno - shift
-        current_fmt_only_keys.each { |k|
-          formath[k] = case k
-          when :lno
-            lno + so.offset
-          when :lno0
-            lno
-          when :lno1
-            lno + 1
-          when :LNO
-            global_lineno + so.offset - shift
-          when :LNO0
-            global_lineno - shift
-          when :LNO1
-            global_lineno + 1 - shift
-          when :idx
-            idx + so.offset
-          when :idx0
-            idx
-          when :idx1
-            idx + 1
-          when :IDX
-            global_idx + so.offset
-          when :IDX0
-            global_idx
-          when :IDX1
-            global_idx + 1
-          when :line
-            ln
-          when :match
-            (matches[lineno - shift]||[]).first
-          when :matches
-            (matches[lineno - shift]||[]).map(&:dump).join ?,
-          else
-            raise "bad format key #{k.inspect}"
-          end
-        }
-        begin
-          if so.delimit_hunks and last_lno and last_lno < lno - 1
-            puts "--"
-          end
-          STDOUT.send writer, format % formath
-        rescue Errno::EPIPE
-          exit 0
+    format_line = proc do |ln, shift|
+      lno = lineno - shift
+      current_fmt_only_keys.each { |k|
+        formath[k] = case k
+        when :lno
+          lno + so.offset
+        when :lno0
+          lno
+        when :lno1
+          lno + 1
+        when :LNO
+          global_lineno + so.offset - shift
+        when :LNO0
+          global_lineno - shift
+        when :LNO1
+          global_lineno + 1 - shift
+        when :idx
+          idx + so.offset
+        when :idx0
+          idx
+        when :idx1
+          idx + 1
+        when :IDX
+          global_idx + so.offset
+        when :IDX0
+          global_idx
+        when :IDX1
+          global_idx + 1
+        when :line
+          ln
+        when :match
+          (matches[lineno - shift]||[]).first
+        when :matches
+          (matches[lineno - shift]||[]).map(&:dump).join ?,
+        else
+          raise "bad format key #{k.inspect}"
         end
-        global_idx +=1
-        idx += 1
-        last_lno = lno
+      }
+      begin
+        if so.delimit_hunks and last_lno and last_lno < lno - 1
+          puts "--"
+        end
+        STDOUT.send writer, format % formath
+      rescue Errno::EPIPE
+        exit 0
       end
+      global_idx +=1
+      idx += 1
+      last_lno = lno
     end
 
     window = []
@@ -271,16 +269,18 @@ global_idx,global_lineno = 0,0
       }
       if window.size > winsiz
         outline = window.shift
-        decide_line.call(outline, winsiz) {
-          # calculating line number of currently processed
-          # line from line number of latest read line
-          lno = lineno - winsiz
+        # calculating line number of currently processed
+        # line from line number of latest read line
+        lno = lineno - winsiz
+        if
           pos_ranges.delete_if.with_object(false) { |r|
             r.include? lno and break true
             # we passed over r, it can be dropped
             lno >= r.begin
           } or pseudo_pos_ranges.any? { |r| r.include? lno }
-        }
+        then
+          format_line[outline, winsiz]
+        end
       end
       [pos_ranges, neg_ranges, regexen].all? { |ra| ra.empty? } and break
       # drop match record for a line known to be out of the window
@@ -295,7 +295,8 @@ global_idx,global_lineno = 0,0
       neglno = i - window.size
       shift = window.size - i - 1
       lno = lineno - shift
-      decide_line.call(l, shift) do
+      #decide_line.call(l, shift) do
+      if
         pos_ranges.any? { |r| r.include? lno } or
         pure_neg_ranges.any? { |r| r.include? neglno } or
         # for mixed ranges we have to manually check
@@ -311,6 +312,8 @@ global_idx,global_lineno = 0,0
             end
           }
         }
+      then
+        format_line[l, shift]
       end
     end
 
