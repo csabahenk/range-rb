@@ -6,6 +6,9 @@ SOpt = SimpleOpts::Opt
 so = SimpleOpts.get_args(["<rangexp...>",
                           {offset: 0, number: false, format: nil, header: nil,
                            grep: SOpt.new(default: nil, type: Regexp),
+                           grep_after_context: SOpt.new(short: ?A, default: nil, type: Integer),
+                           grep_before_context: SOpt.new(short: ?B, default: nil, type: Integer),
+                           grep_context: SOpt.new(short: ?C, default: nil, type: Integer),
                            final_newline: true, concat_args: false}],
                           leftover_opts_key: :rangexp_candidates)
 conv = proc { |n| Integer(n) - so.offset }
@@ -14,6 +17,19 @@ conv = proc { |n| Integer(n) - so.offset }
 # be now attempted to parse as range expressions.
 # Along this, $* will be recreated to collect those args
 # which fail this turn of parsing.
+make_neighborrx = proc { |opt=""| /(?:(?<dir1>[<>]|<>)(?<step1>-?\d+))#{opt}(?:(?<dir2>[<>])(?<step2>-?\d+))?/ }
+get_neighborhood = proc do |match|
+  steph = {?<=> 0, ?>=> 0}
+  [%i[dir1 step1], %i[dir2 step2]].each { |d,s|
+    d,s = [d,s].map { |k| match[k] }
+    s or next
+    s = Integer(s)
+    steph.each_key { |q|
+     d.include? q and steph[q] = s
+    }
+  }
+  [-steph[?<], steph[?>]].sort
+end
 argv_remaining = so.rangexp_candidates + $*
 $*.clear
 ranges = argv_remaining.map { |a|
@@ -27,21 +43,12 @@ ranges = argv_remaining.map { |a|
       [0, conv[$2], !!$1]
     when ".."
       [0, nil]
-    when /\A(?<center>-?\d+)(?<dir1>[<>]|<>)(?<step1>-?\d+)(?:(?<dir2>[<>])(?<step2>-?\d+))?/
+    when /\A(?<center>-?\d+)#{make_neighborrx[]}\Z/
       c = conv[$~[:center]]
-      steph = {?<=> 0, ?>=> 0}
-      [%i[dir1 step1], %i[dir2 step2]].each { |d,s|
-        d,s = [d,s].map { |k| $~[k] }
-        s or next
-        s = Integer(s)
-        steph.each_key { |q|
-         d.include? q and steph[q] = s
-        }
-      }
-      ends = [c - steph[?<], c + steph[?>]].sort.send(:map, &if c >= 0
-        proc { |v| [v,0].max }
+      ends = get_neighborhood[$~].send(:map, &if c >= 0
+        proc { |v| [c + v, 0].max }
       else
-        proc { |v| [v,-1].min }
+        proc { |v| [c + v, -1].min }
       end)
       ends + [false]
     else
@@ -50,6 +57,41 @@ ranges = argv_remaining.map { |a|
     end
   }
 }.flatten.compact
+
+# Another scrub of arguments, now for regexen. Regexp syntax is Ruby-like.
+# Logical combinator applied on multiple regexen is disjunction,
+# (as well as with rangexps), so far that's like just '|' regexp
+# operator; however, this syntax recognizes neighbour spec like for
+# rangexps, like
+#
+#   %r/hello/<>3
+#
+# for a context of 3 lines, so this can be specified individually.
+# Regexp flags (mainly 'i' would be useful) are also individual.
+regexen = []
+# Include value of -g first.
+if so.grep
+  regexen << {rx: so.grep, down: -(so.grep_before_context || so.grep_context || 0),
+              up: so.grep_after_context || so.grep_context || 0}
+end
+argv_remaining = $*.dup
+$*.clear
+argv_remaining.each { |a|
+  rxspec = if a =~ /\A%r([^\\])/
+    delim_raw = $1
+    end_delim_raw = [%w[< >], %w[( )], %w[{ }], %w[[ ]]].to_h[delim_raw] || delim_raw
+    delim,end_delim = [delim_raw, end_delim_raw].map { |s| Regexp.escape s }
+    if match = a.match(/\A%r#{delim}(?<rx>(?:[^#{end_delim}\\]|\\.)*)#{end_delim}(?<rxopts>[mix]*)#{make_neighborrx[??]}\Z/)
+      {rx: Regexp.new(match[:rx].gsub(/\\#{delim}/, delim),
+                      {?i=> Regexp::IGNORECASE, ?m=> Regexp::MULTILINE, ?x=> Regexp::EXTENDED}.select {|o,v|
+                        match[:rxopts].include? o
+                      }.values.inject(:|))
+      }.merge(%i[down up].zip(get_neighborhood[match]).to_h)
+    end
+  end
+  rxspec ? regexen << rxspec : $* << a
+}
+
 # $* holds now input files and truly invalid options.
 # Fire up the option parser once more. Now if it finds anything
 # that looks like an option we can let it freely pour its rage
@@ -59,7 +101,7 @@ SimpleOpts.new.parse $*
 
 BASE_PARAMS   = {NL: "\n", TAB: "\t"}
 HEADER_PARAMS = {path:"", file:"", fno:0, fno0:0, fno1:0}
-FORMAT_PARAMS = {line: "", match:""}.merge(HEADER_PARAMS).merge(
+FORMAT_PARAMS = {line: "", match:"", matches:[]}.merge(HEADER_PARAMS).merge(
                  lno:0, lno0:0, lno1:0, LNO:0, LNO0:0, LNO1:0,
                  idx:0, idx0:0, idx1:0, IDX:0, IDX0:0, IDX1:0)
 
@@ -122,7 +164,7 @@ pure_neg_ranges,mixed_ranges = neg_ranges.partition { |r| [r.begin||0, r.end||-1
 # can match against them in such context.
 # NOTE Ruby >= 2.6 semantics (infinite ranges) is used.
 pseudo_pos_ranges = mixed_ranges.select { |r| (r.begin||0) >= 0 }.map { |r| (r.begin||0).. }
-winsiz = (bottom||0).abs
+winsiz = ([bottom] + regexen.map { |rx| rx[:down] }).compact.map(&:abs).max || 0
 
 writer = so.final_newline ? :puts : :print
 
@@ -161,16 +203,9 @@ global_idx,global_lineno = 0,0
 
     idx = 0
     lineno = 0
+    matches = {}
     decide_line = proc do |ln, shift, &rangeval|
-      match = nil
-      if rangeval[] or (
-        if so.grep and ln =~ so.grep
-          match = $&
-          true
-        else
-          false
-        end
-      )
+      if rangeval[]
         current_fmt_only_keys.each { |k|
           formath[k] = case k
           when :lno
@@ -200,7 +235,9 @@ global_idx,global_lineno = 0,0
           when :line
             ln
           when :match
-            match
+            (matches[lineno - shift]||[]).first
+          when :matches
+            (matches[lineno - shift]||[]).map(&:dump).join ?,
           else
             raise "bad format key #{k.inspect}"
           end
@@ -219,6 +256,13 @@ global_idx,global_lineno = 0,0
     fh.each_with_index { |line,_lineno|
       lineno = _lineno
       window << line
+      regexen.each { |rx|
+        if rx[:rx] =~ line
+          (matches[lineno]||=[]) << $&
+          # inject ad hoc entry for match neighborhood
+          pos_ranges.insert 0, [lineno + rx[:down], 0].max..lineno + rx[:up]
+        end
+      }
       if window.size > winsiz
         outline = window.shift
         decide_line.call(outline, winsiz) {
@@ -232,7 +276,9 @@ global_idx,global_lineno = 0,0
           } or pseudo_pos_ranges.any? { |r| r.include? lno }
         }
       end
-      [pos_ranges, neg_ranges].all? { |ra| ra.empty? } and break
+      [pos_ranges, neg_ranges, regexen].all? { |ra| ra.empty? } and break
+      # drop match record for a line known to be out of the window
+      matches.size > winsiz and matches.delete(matches.each_key.first)
       global_lineno += 1
     }
 
