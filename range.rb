@@ -5,7 +5,7 @@ require_relative "../simpleopts.rb"
 
 SOpt = SimpleOpts::Opt
 so = SimpleOpts.get_args(["<rangexp...>",
-                          {offset: 0, number: false, format: nil, header: nil,
+                          {offset: 0, number: false, format: nil, header: nil, footer: nil,
                            grep: SOpt.new(default: nil, type: Regexp),
                            grep_invert_match: SOpt.new(short: ?v, default: false),
                            grep_after_context: SOpt.new(short: ?A, default: nil, type: Integer),
@@ -123,7 +123,8 @@ if not format
   end
 end
 [['header', so.header || "", HEADER_PARAMS],
-  ['format', format, FORMAT_PARAMS]].each do |opt, fmt, prm|
+  ['format', format, FORMAT_PARAMS],
+  ['footer', so.footer || "", FORMAT_PARAMS]].each do |opt, fmt, prm|
   fmt % prm.merge(BASE_PARAMS)
 rescue KeyError
   STDERR.puts "invalid parameters in '--#{opt} #{fmt}'",
@@ -131,14 +132,16 @@ rescue KeyError
   exit 1
 end
 # find out which parameters occur in the given header
-# and format templates by omitting them one by one
+# format and footer templates by omitting them one by one
 # from the parameters and see if this reduced mapping
 # is able to render the template; if not, the omitted
 # parameter is proven to occur.
-current_header_keys, current_format_keys = [
-  [so.header || "", HEADER_PARAMS],
-  [format, FORMAT_PARAMS]
-].map { |fmt, prm|
+#current_header_keys, current_format_keys, current_footer_keys = [
+current_keys = {
+  header: [so.header || "", HEADER_PARAMS],
+  format: [format,          FORMAT_PARAMS],
+  footer: [so.footer || "", FORMAT_PARAMS],
+}.transform_values { |fmt, prm|
   prmb = BASE_PARAMS.merge prm
   prmb.each_key.with_object([]) { |k,aa|
     prmk = prmb.dup
@@ -150,15 +153,17 @@ current_header_keys, current_format_keys = [
     end
   }
 }
-# keys that should be set upon visitng a file,
-# either because used in the header, or because
-# are used in line formatting but not changing
-# in the scope of the file
-current_hdr_fmt_keys = current_header_keys | (current_format_keys &
-                                              BASE_PARAMS.merge(HEADER_PARAMS).keys)
-# keys that are used in line formatting and are
-# chaging from line to line
-current_fmt_only_keys = current_format_keys - BASE_PARAMS.merge(HEADER_PARAMS).keys
+# Arrange current keys in sets according to stages of filling them
+# on course of visiting a file.
+header_keys_in_use = current_keys.each_value.inject(:|) & BASE_PARAMS.merge(HEADER_PARAMS).keys
+format_noheader_keys,footer_noheader_keys = current_keys.values_at(:format, :footer).map { |ka| ka - header_keys_in_use }
+# amend above sets by transferring indices from footer, as we don't want to
+# update indices for footer (footer is like a stealth match for last line --
+# matches but not counted)
+indices = %i[idx idx0 idx1 IDX IDX0 IDX1]
+footer_indices = current_keys[:footer] & indices
+format_keys_final = format_noheader_keys | footer_indices
+footer_noheader_noindex_keys = footer_noheader_keys - footer_indices
 
 neg_ranges,pos_ranges = ranges.partition { |r| %i[begin end].any? {|m| (r.send(m)||0) < 0 }}
 pos_ranges.sort_by! { |r|
@@ -174,7 +179,7 @@ pure_neg_ranges,mixed_ranges = neg_ranges.partition { |r| [r.begin||0, r.end||-1
 # can match against them in such context.
 # NOTE Ruby >= 2.6 semantics (infinite ranges) is used.
 pseudo_pos_ranges = mixed_ranges.select { |r| (r.begin||0) >= 0 }.map { |r| (r.begin||0).. }
-winsiz = ([bottom] + regexen.map { |rx| rx[:down] }).compact.map(&:abs).max || 0
+winsiz = ([so.footer ? 1 : 0, bottom] + regexen.map { |rx| rx[:down] }).compact.map(&:abs).max
 
 Signal.trap("SIGPIPE", "SYSTEM_DEFAULT")
 
@@ -196,9 +201,9 @@ global_idx,global_lineno,fidx = 0,0,0
     matches = {}
     last_lno = nil
 
-    format_line = proc do |ln, shift|
+    format_line = proc do |keys, fmt, ln, shift|
       if idx.zero?
-        current_hdr_fmt_keys.each { |k|
+        header_keys_in_use.each { |k|
           formath[k] = case k
           when :NL
             "\n"
@@ -251,7 +256,7 @@ global_idx,global_lineno,fidx = 0,0,0
       end
 
       lno = lineno - shift
-      current_fmt_only_keys.each { |k|
+      keys.each { |k|
         formath[k] = case k
         when :lno
           lno + so.offset
@@ -296,13 +301,13 @@ global_idx,global_lineno,fidx = 0,0,0
         when :matches
           (matches[lineno - shift]||[]).map(&:dump).join ?,
         else
-          raise "bad format key #{k.inspect}"
+          raise "bad formatter key #{k.inspect}"
         end
       }
       if so.delimit_hunks and last_lno and last_lno < lno - 1
         puts "--"
       end
-      STDOUT.send writer, format % formath
+      STDOUT.send writer, fmt % formath
       global_idx +=1
       idx += 1
       last_lno = lno
@@ -333,10 +338,10 @@ global_idx,global_lineno,fidx = 0,0,0
             lno >= r.begin
           } or pseudo_pos_ranges.any? { |r| r.include? lno }
         then
-          format_line[outline, winsiz]
+          format_line[format_keys_final, format, outline, winsiz]
         end
       end
-      [pos_ranges_current, neg_ranges, regexen].all? { |ra| ra.empty? } and break
+      [pos_ranges_current, neg_ranges, regexen].all? { |ra| ra.empty? } and !so.footer and break
       # drop match record for a line known to be out of the window
       matches.size > winsiz and matches.delete(matches.each_key.first)
       global_lineno += 1
@@ -366,8 +371,11 @@ global_idx,global_lineno,fidx = 0,0,0
           }
         }
       then
-        format_line[l, shift]
+        format_line[format_keys_final, format, l, shift]
       end
+    end
+    if so.footer and idx > 0
+      format_line[footer_noheader_noindex_keys, so.footer, window.last, 0]
     end
 
   end
