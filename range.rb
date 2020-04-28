@@ -100,7 +100,7 @@ SimpleOpts.new.parse $*
 # If we got so far, $* has our input files.
 
 BASE_PARAMS   = {NL: "\n", TAB: "\t"}
-HEADER_PARAMS = {path:"", file:"", fno:0, fno0:0, fno1:0}
+HEADER_PARAMS = {path:"", file:"", fno:0, fno0:0, fno1:0, fidx:0, fidx0:0, fidx1:0}
 FORMAT_PARAMS = {line: "", match:"", matches:[]}.merge(HEADER_PARAMS).merge(
                  lno:0, lno0:0, lno1:0, LNO:0, LNO0:0, LNO1:0,
                  idx:0, idx0:0, idx1:0, IDX:0, IDX0:0, IDX1:0)
@@ -168,44 +168,54 @@ winsiz = ([bottom] + regexen.map { |rx| rx[:down] }).compact.map(&:abs).max || 0
 
 writer = so.final_newline ? :puts : :print
 
-global_idx,global_lineno = 0,0
-(so.concat_args ? [$<] : ($*.empty? ? [?-] : $*)).each_with_index do |fn, fidx|
+global_idx,global_lineno,fidx = 0,0,0
+(so.concat_args ? [$<] : ($*.empty? ? [?-] : $*)).each_with_index do |fn, fno|
   case fn
   when $<
-    proc { |&cbk| cbk[fidx, '<cat>', $<] }
+    proc { |&cbk| cbk[fno, '<cat>', $<] }
   when ?-
-    proc { |&cbk| cbk[fidx, '<stdin>', STDIN] }
+    proc { |&cbk| cbk[fno, '<stdin>', STDIN] }
   else
-    proc { |&cbk| open(fn) { |fh| cbk[fidx, fn, fh] } }
-  end.call do |fidx, fn, fh|
+    proc { |&cbk| open(fn) { |fh| cbk[fno, fn, fh] } }
+  end.call do |fno, fn, fh|
     formath = {}
-    current_hdr_fmt_keys.each { |k|
-      formath[k] = case k
-      when :NL
-        "\n"
-      when :TAB
-        "\t"
-      when :path
-        fn
-      when :file
-        File.basename(fn)
-      when :fno
-        fidx + so.offset
-      when :fno0
-        fidx
-      when :fno1
-        fidx + 1
-      else
-        raise "bad header key #{k.inspect}"
-      end
-    }
-    so.header and puts so.header % formath
-
     idx = 0
     lineno = 0
     matches = {}
     last_lno = nil
+
     format_line = proc do |ln, shift|
+      if idx.zero?
+        current_hdr_fmt_keys.each { |k|
+          formath[k] = case k
+          when :NL
+            "\n"
+          when :TAB
+            "\t"
+          when :path
+            fn
+          when :file
+            File.basename(fn)
+          when :fno
+            fno + so.offset
+          when :fno0
+            fno
+          when :fno1
+            fno + 1
+          when :fidx
+            fidx + so.offset
+          when :fidx0
+            fidx
+          when :fidx1
+            fidx + 1
+          else
+            raise "bad header key #{k.inspect}"
+          end
+        }
+        so.header and puts so.header % formath
+        fidx += 1
+      end
+
       lno = lineno - shift
       current_fmt_only_keys.each { |k|
         formath[k] = case k
