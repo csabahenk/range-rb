@@ -6,6 +6,7 @@ SOpt = SimpleOpts::Opt
 so = SimpleOpts.get_args(["<rangexp...>",
                           {offset: 0, number: false, format: nil, header: nil,
                            grep: SOpt.new(default: nil, type: Regexp),
+                           grep_invert_match: SOpt.new(short: ?v, default: false),
                            grep_after_context: SOpt.new(short: ?A, default: nil, type: Integer),
                            grep_before_context: SOpt.new(short: ?B, default: nil, type: Integer),
                            grep_context: SOpt.new(short: ?C, default: nil, type: Integer),
@@ -71,7 +72,8 @@ ranges = argv_remaining.map { |a|
 regexen = []
 # Include value of -g first.
 if so.grep
-  regexen << {rx: so.grep, down: -(so.grep_before_context || so.grep_context || 0),
+  regexen << {rx: so.grep, inverse: so.grep_invert_match,
+              down: -(so.grep_before_context || so.grep_context || 0),
               up: so.grep_after_context || so.grep_context || 0}
 end
 argv_remaining = $*.dup
@@ -81,11 +83,16 @@ argv_remaining.each { |a|
     delim_raw = $1
     end_delim_raw = [%w[< >], %w[( )], %w[{ }], %w[[ ]]].to_h[delim_raw] || delim_raw
     delim,end_delim = [delim_raw, end_delim_raw].map { |s| Regexp.escape s }
-    if match = a.match(/\A%r#{delim}(?<rx>(?:[^#{end_delim}\\]|\\.)*)#{end_delim}(?<rxopts>[mix]*)#{make_neighborrx[??]}\Z/)
+    if match = a.match(/\A%(?<inverse>!)?r
+                          #{delim}(?<rx>(?:[^#{end_delim}\\]|\\.)*)#{end_delim}
+                          (?<rxopts>[mix]*)
+                          #{make_neighborrx[??]}\Z/x)
+    then
       {rx: Regexp.new(match[:rx].gsub(/\\#{delim}/, delim),
                       {?i=> Regexp::IGNORECASE, ?m=> Regexp::MULTILINE, ?x=> Regexp::EXTENDED}.select {|o,v|
                         match[:rxopts].include? o
-                      }.values.inject(:|))
+                      }.values.inject(:|)),
+       inverse: !!match[:inverse],
       }.merge(%i[down up].zip(get_neighborhood[match]).to_h)
     end
   end
@@ -270,8 +277,9 @@ global_idx,global_lineno,fidx = 0,0,0
       lineno = _lineno
       window << line
       regexen.each { |rx|
-        if rx[:rx] =~ line
-          (matches[lineno]||=[]) << $&
+        m = rx[:rx].match line
+        m and (matches[lineno]||=[]) << m.to_s
+        if rx[:inverse] == !m
           # inject ad hoc entry for match neighborhood
           pos_ranges_current.insert 0, [lineno + rx[:down], 0].max..lineno + rx[:up]
         end
