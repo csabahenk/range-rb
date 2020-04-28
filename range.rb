@@ -1,5 +1,6 @@
 #!/usr/bin/env ruby
 
+require "json"
 require_relative "../simpleopts.rb"
 
 SOpt = SimpleOpts::Opt
@@ -10,7 +11,7 @@ so = SimpleOpts.get_args(["<rangexp...>",
                            grep_after_context: SOpt.new(short: ?A, default: nil, type: Integer),
                            grep_before_context: SOpt.new(short: ?B, default: nil, type: Integer),
                            grep_context: SOpt.new(short: ?C, default: nil, type: Integer),
-                           final_newline: true, concat_args: false, delimit_hunks: false}],
+                           force_newline: true, concat_args: false, delimit_hunks: false}],
                           leftover_opts_key: :rangexp_candidates)
 conv = proc { |n| Integer(n) - so.offset }
 
@@ -106,9 +107,10 @@ argv_remaining.each { |a|
 SimpleOpts.new.parse $*
 # If we got so far, $* has our input files.
 
-BASE_PARAMS   = {NL: "\n", TAB: "\t"}
-HEADER_PARAMS = {path:"", file:"", fno:0, fno0:0, fno1:0, fidx:0, fidx0:0, fidx1:0}
-FORMAT_PARAMS = {line: "", match:"", matches:[]}.merge(HEADER_PARAMS).merge(
+BASE_PARAMS   = %i[NL TAB NUL BLACK RED GREEN YELLOW BLUE MAGENTA CYAN WHITE CLR].map { |s| [s, ""] }.to_h
+HEADER_PARAMS = {path:"", file:"", dir:"", fno:0, fno0:0, fno1:0, fidx:0, fidx0:0, fidx1:0}
+FORMAT_PARAMS = {line: "", chomp: "", strip: "", rstrip: "", lstrip: "", dump: "", json: "",
+                 match:"", matches:[]}.merge(HEADER_PARAMS).merge(
                  lno:0, lno0:0, lno1:0, LNO:0, LNO0:0, LNO1:0,
                  idx:0, idx0:0, idx1:0, IDX:0, IDX0:0, IDX1:0)
 
@@ -176,7 +178,7 @@ winsiz = ([bottom] + regexen.map { |rx| rx[:down] }).compact.map(&:abs).max || 0
 
 Signal.trap("SIGPIPE", "SYSTEM_DEFAULT")
 
-writer = so.final_newline ? :puts : :print
+writer = so.force_newline ? :puts : :print
 
 global_idx,global_lineno,fidx = 0,0,0
 (so.concat_args ? [$<] : ($*.empty? ? [?-] : $*)).each_with_index do |fn, fno|
@@ -202,10 +204,32 @@ global_idx,global_lineno,fidx = 0,0,0
             "\n"
           when :TAB
             "\t"
+          when :NUL
+            "\0"
+          when :BLACK
+            "\e[0;30;49m"
+          when :RED
+            "\e[0;31;49m"
+          when :GREEN
+            "\e[0;32;49m"
+          when :YELLOW
+            "\e[0;33;49m"
+          when :BLUE
+            "\e[0;34;49m"
+          when :MAGENTA
+            "\e[0;35;49m"
+          when :CYAN
+            "\e[0;36;49m"
+          when :WHITE
+            "\e[0;37;49m"
+          when :CLR
+            "\e[0m"
           when :path
             fn
           when :file
             File.basename(fn)
+          when :dir
+            File.dirname(fn)
           when :fno
             fno + so.offset
           when :fno0
@@ -222,7 +246,7 @@ global_idx,global_lineno,fidx = 0,0,0
             raise "bad header key #{k.inspect}"
           end
         }
-        so.header and puts so.header % formath
+        so.header and STDOUT.send writer, so.header % formath
         fidx += 1
       end
 
@@ -255,6 +279,18 @@ global_idx,global_lineno,fidx = 0,0,0
           global_idx + 1
         when :line
           ln
+        when :chomp
+          ln.chomp
+        when :strip
+          ln.strip
+        when :rstrip
+          ln.rstrip
+        when :lstrip
+          ln.lstrip
+        when :dump
+          ln.dump
+        when :json
+          ln.to_json
         when :match
           (matches[lineno - shift]||[]).first
         when :matches
