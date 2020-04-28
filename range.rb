@@ -166,6 +166,8 @@ pure_neg_ranges,mixed_ranges = neg_ranges.partition { |r| [r.begin||0, r.end||-1
 pseudo_pos_ranges = mixed_ranges.select { |r| (r.begin||0) >= 0 }.map { |r| (r.begin||0).. }
 winsiz = ([bottom] + regexen.map { |rx| rx[:down] }).compact.map(&:abs).max || 0
 
+Signal.trap("SIGPIPE", "SYSTEM_DEFAULT")
+
 writer = so.final_newline ? :puts : :print
 
 global_idx,global_lineno,fidx = 0,0,0
@@ -253,14 +255,10 @@ global_idx,global_lineno,fidx = 0,0,0
           raise "bad format key #{k.inspect}"
         end
       }
-      begin
-        if so.delimit_hunks and last_lno and last_lno < lno - 1
-          puts "--"
-        end
-        STDOUT.send writer, format % formath
-      rescue Errno::EPIPE
-        exit 0
+      if so.delimit_hunks and last_lno and last_lno < lno - 1
+        puts "--"
       end
+      STDOUT.send writer, format % formath
       global_idx +=1
       idx += 1
       last_lno = lno
