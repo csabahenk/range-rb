@@ -152,10 +152,11 @@ current_header_keys, current_format_keys = [
 # either because used in the header, or because
 # are used in line formatting but not changing
 # in the scope of the file
-current_hdr_fmt_keys = current_header_keys | (current_format_keys & HEADER_PARAMS.keys)
+current_hdr_fmt_keys = current_header_keys | (current_format_keys &
+                                              BASE_PARAMS.merge(HEADER_PARAMS).keys)
 # keys that are used in line formatting and are
 # chaging from line to line
-current_fmt_only_keys = current_format_keys - HEADER_PARAMS.keys
+current_fmt_only_keys = current_format_keys - BASE_PARAMS.merge(HEADER_PARAMS).keys
 
 neg_ranges,pos_ranges = ranges.partition { |r| %i[begin end].any? {|m| (r.send(m)||0) < 0 }}
 pos_ranges.sort_by! { |r|
