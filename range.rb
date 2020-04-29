@@ -3,6 +3,22 @@
 require "json"
 require_relative "../simpleopts.rb"
 
+BASE_PARAMS   = {NL: "\n", TAB: "\t", NUL: "\0",
+                 BLACK: "\e[0;30;49m", RED: "\e[0;31;49m", GREEN: "\e[0;32;49m", YELLOW: "\e[0;33;49m",
+                 BLUE: "\e[0;34;49m", MAGENTA: "\e[0;35;49m", CYAN: "\e[0;36;49m", WHITE: "\e[0;37;49m",
+                 CLR: "\e[0m"}
+HEADER_PARAMS = {path:"", file:"", dir:"", fno:0, fno0:0, fno1:0, fidx:0, fidx0:0, fidx1:0}
+FORMAT_PARAMS = {line: "", chomp: "", strip: "", rstrip: "", lstrip: "", dump: "", json: "",
+                 match:"", matches:[]}.merge(HEADER_PARAMS).merge(
+                 lno:0, lno0:0, lno1:0, LNO:0, LNO0:0, LNO1:0,
+                 idx:0, idx0:0, idx1:0, IDX:0, IDX0:0, IDX1:0)
+
+# The delimiters that can be used in Ruby style regexp literarls.
+RXDELIMS = %w[ ! " # $ % & ' ) * + , - . / : ; = > ? @ \\ \] ^ _ ` | } ~  ( { \[  < ]
+# we don't accept following as they are special to our special syntax
+RXDELIM_BLACKLIST = %w[ < > - \\ ]
+RXDELIMMAP = [%w[< >], %w[( )], %w[{ }], %w[[ ]]].to_h
+
 SOpt = SimpleOpts::Opt
 so = SimpleOpts.get_args(["<rangexp...>",
                           {offset: 0, number: false, format: nil, header: nil, footer: nil,
@@ -80,21 +96,30 @@ end
 argv_remaining = $*.dup
 $*.clear
 argv_remaining.each { |a|
-  rxspec = if a =~ /\A%r([^\\])/
+  rxspec = if a =~ /\A%r(.)/ and (RXDELIMS - RXDELIM_BLACKLIST).include? $1
     delim_raw = $1
-    end_delim_raw = [%w[< >], %w[( )], %w[{ }], %w[[ ]]].to_h[delim_raw] || delim_raw
+    end_delim_raw = RXDELIMMAP[delim_raw] || delim_raw
     delim,end_delim = [delim_raw, end_delim_raw].map { |s| Regexp.escape s }
+    delim_unescape = proc { |s| s.gsub(/\\#{end_delim_raw}/, end_delim_raw) }
     if match = a.match(/\A%(?<inverse>!)?r
                           #{delim}(?<rx>(?:[^#{end_delim}\\]|\\.)*)#{end_delim}
+                             (?:(?<subs>(?:[^#{end_delim}\\]|\\.)*)#{end_delim})?
                           (?<rxopts>[mix]*)
                           #{make_neighborrx[??]}\Z/x)
     then
-      {rx: Regexp.new(match[:rx].gsub(/\\#{delim}/, delim),
+      {rx: Regexp.new(delim_unescape[match[:rx]],
                       {?i=> Regexp::IGNORECASE, ?m=> Regexp::MULTILINE, ?x=> Regexp::EXTENDED}.select {|o,v|
                         match[:rxopts].include? o
                       }.values.inject(:|)),
        inverse: !!match[:inverse],
-      }.merge(%i[down up].zip(get_neighborhood[match]).to_h)
+      }.merge(match[:subs] ? {subs: begin
+                                delim_unescape[match[:subs]] % BASE_PARAMS
+                              rescue KeyError
+                                STDERR.puts "invalid parameters in substitution",
+                                            "valid parameters are:", BASE_PARAMS.keys
+                                exit 1
+                              end} : {}
+      ).merge(%i[down up].zip(get_neighborhood[match]).to_h)
     end
   end
   rxspec ? regexen << rxspec : $* << a
@@ -106,13 +131,6 @@ argv_remaining.each { |a|
 # over it.
 SimpleOpts.new.parse $*
 # If we got so far, $* has our input files.
-
-BASE_PARAMS   = %i[NL TAB NUL BLACK RED GREEN YELLOW BLUE MAGENTA CYAN WHITE CLR].map { |s| [s, ""] }.to_h
-HEADER_PARAMS = {path:"", file:"", dir:"", fno:0, fno0:0, fno1:0, fidx:0, fidx0:0, fidx1:0}
-FORMAT_PARAMS = {line: "", chomp: "", strip: "", rstrip: "", lstrip: "", dump: "", json: "",
-                 match:"", matches:[]}.merge(HEADER_PARAMS).merge(
-                 lno:0, lno0:0, lno1:0, LNO:0, LNO0:0, LNO1:0,
-                 idx:0, idx0:0, idx1:0, IDX:0, IDX0:0, IDX1:0)
 
 format = so.format
 if not format
@@ -205,30 +223,8 @@ global_idx,global_lineno,fidx = 0,0,0
       if idx.zero?
         header_keys_in_use.each { |k|
           formath[k] = case k
-          when :NL
-            "\n"
-          when :TAB
-            "\t"
-          when :NUL
-            "\0"
-          when :BLACK
-            "\e[0;30;49m"
-          when :RED
-            "\e[0;31;49m"
-          when :GREEN
-            "\e[0;32;49m"
-          when :YELLOW
-            "\e[0;33;49m"
-          when :BLUE
-            "\e[0;34;49m"
-          when :MAGENTA
-            "\e[0;35;49m"
-          when :CYAN
-            "\e[0;36;49m"
-          when :WHITE
-            "\e[0;37;49m"
-          when :CLR
-            "\e[0m"
+          when :NL,:TAB,:NUL,:BLACK,:RED,:GREEN,:YELLOW,:BLUE,:MAGENTA,:CYAN,:WHITE,:CLR
+            BASE_PARAMS[k]
           when :path
             fn
           when :file
@@ -319,9 +315,12 @@ global_idx,global_lineno,fidx = 0,0,0
       lineno = _lineno
       window << line
       regexen.each { |rx|
-        m = rx[:rx].match line
-        m and (matches[lineno]||=[]) << m.to_s
-        if rx[:inverse] == !m
+        if
+          rx[:subs] ? line.gsub!(rx[:rx], rx[:subs]) : rx[:rx] =~ line
+        then
+          (matches[lineno]||=[]) << $&
+        end
+        if rx[:inverse] == !$~
           # inject ad hoc entry for match neighborhood
           pos_ranges_current.insert 0, [lineno + rx[:down], 0].max..lineno + rx[:up]
         end
