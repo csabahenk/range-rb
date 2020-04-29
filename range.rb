@@ -311,8 +311,7 @@ global_idx,global_lineno,fidx = 0,0,0
 
     pos_ranges_current = pos_ranges.dup
     window = []
-    fh.each_with_index { |line,_lineno|
-      lineno = _lineno
+    fh.each do |line|
       window << line
       regexen.each { |rx|
         if
@@ -348,14 +347,15 @@ global_idx,global_lineno,fidx = 0,0,0
       # drop match record for a line known to be out of the window
       matches.size > winsiz and matches.delete(matches.each_key.first)
       global_lineno += 1
-    }
+      lineno += 1
+    end
 
     # exhausted file, now negative indices can be
     # dereferenced in window, so decide about
     # lines in window, considering all ranges.
     window.each_with_index do |l,i|
       neglno = i - window.size
-      shift = window.size - i - 1
+      shift = window.size - i
       lno = lineno - shift
       if
         pos_ranges_current.any? { |r| r.include? lno } or
@@ -378,7 +378,11 @@ global_idx,global_lineno,fidx = 0,0,0
       end
     end
     if so.footer and idx > 0
-      format_line[footer_noheader_noindex_keys, so.footer, window.last, 0]
+      format_line[footer_noheader_noindex_keys, so.footer, window.last, 1]
+      # footer is 'sthealth match', have to set back global_idx
+      # to pretend as we were not run. (idx is also captured but its
+      # scope ends here so that does not matter.)
+      global_idx -= 1
     end
 
   end
