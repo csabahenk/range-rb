@@ -321,8 +321,12 @@ global_idx,global_lineno,fidx = 0,0,0
           (matches[lineno]||=[]) << $&
         end
         if rx[:inverse] == !$~
-          # inject ad hoc entry for match neighborhood
-          pos_ranges_current.insert 0, [lineno + rx[:down], 0].max..lineno + rx[:up]
+          # insert ad hoc item for match neighborhood so that we preserve
+          # order (no need for bsearch as item will likely inserted
+          # close to beginning)
+          up = lineno + rx[:up]
+          i = pos_ranges_current.index { |r| up < r.begin } || pos_ranges_current.size
+          pos_ranges_current.insert i, [lineno + rx[:down], 0].max..up
         end
       }
       if window.size > winsiz
