@@ -8,7 +8,7 @@ BASE_PARAMS   = {NL: "\n", TAB: "\t", NUL: "\0",
                  BLUE: "\e[0;34;49m", MAGENTA: "\e[0;35;49m", CYAN: "\e[0;36;49m", WHITE: "\e[0;37;49m",
                  CLR: "\e[0m"}
 HEADER_PARAMS = {path:"", file:"", dir:"", fno:0, fno0:0, fno1:0, fidx:0, fidx0:0, fidx1:0}
-FORMAT_PARAMS = {line: "", chomp: "", strip: "", rstrip: "", lstrip: "", dump: "", json: "",
+FORMAT_PARAMS = {line: "", len: 0, chomp: "", strip: "", rstrip: "", lstrip: "", dump: "", json: "",
                  match:"", matches:[]}.merge(HEADER_PARAMS).merge(
                  lno:0, lno0:0, lno1:0, LNO:0, LNO0:0, LNO1:0,
                  idx:0, idx0:0, idx1:0, IDX:0, IDX0:0, IDX1:0)
@@ -292,6 +292,8 @@ global_idx,global_lineno,fidx = 0,0,0
           ln.dump
         when :json
           ln.to_json
+        when :len
+          ln.chomp.size
         when :match
           (matches[lineno - shift]||[]).first
         when :matches
