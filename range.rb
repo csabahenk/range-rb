@@ -27,7 +27,7 @@ so = SimpleOpts.get_args(["<rangexp...>",
                            grep_after_context: SOpt.new(short: ?A, default: nil, type: Integer),
                            grep_before_context: SOpt.new(short: ?B, default: nil, type: Integer),
                            grep_context: SOpt.new(short: ?C, default: nil, type: Integer),
-                           force_newline: true, concat_args: false, delimit_hunks: false}],
+                           force_end: %w[newline cleartty], concat_args: false, delimit_hunks: false}],
                           leftover_opts_key: :rangexp_candidates)
 conv = proc { |n| Integer(n) - so.offset }
 
@@ -201,7 +201,28 @@ winsiz = ([so.footer ? 1 : 0, bottom] + regexen.map { |rx| rx[:down] }).compact.
 
 Signal.trap("SIGPIPE", "SYSTEM_DEFAULT")
 
-writer = so.force_newline ? :puts : :print
+writer = so.force_end.map { |e|
+  case e
+  when "cleartty"
+    STDOUT.isatty ? "clear" : nil
+  else
+    e
+  end
+}.compact.sort.uniq.then { |force_end|
+  case force_end
+  when []
+    STDOUT.method :print
+  when %w[newline]
+    STDOUT.method :puts
+  when %w[clear]
+    ->(arg) { print arg + BASE_PARAMS[:CLR] }
+  when %w[clear newline]
+    ->(arg) { puts arg.chomp + BASE_PARAMS[:CLR] }
+  else
+    STDERR.puts "unknown ending spec: #{force_end - %w[clear newline]}"
+    exit 1
+  end
+}
 
 global_idx,global_lineno,fidx = 0,0,0
 (so.concat_args ? [$<] : ($*.empty? ? [?-] : $*)).each_with_index do |fn, fno|
@@ -247,7 +268,7 @@ global_idx,global_lineno,fidx = 0,0,0
             raise "bad header key #{k.inspect}"
           end
         }
-        so.header and STDOUT.send writer, so.header % formath
+        so.header and writer.(so.header % formath)
         fidx += 1
       end
 
@@ -305,7 +326,7 @@ global_idx,global_lineno,fidx = 0,0,0
       if so.delimit_hunks and last_lno and last_lno < lno - 1
         puts "--"
       end
-      STDOUT.send writer, fmt % formath
+      writer.(fmt % formath)
       global_idx +=1
       idx += 1
       last_lno = lno
