@@ -1,0 +1,3 @@
+[submodule "lib/simpleopts"]
+	path = lib/simpleopts
+	url = https://github.com/csabahenk/simpleopts

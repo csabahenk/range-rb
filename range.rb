@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 
 require "json"
-require_relative "../simpleopts.rb"
+require_relative "lib/simpleopts/simpleopts"
 
 BASE_PARAMS   = {NL: "\n", TAB: "\t", NUL: "\0",
                  BLACK: "\e[0;30;49m", RED: "\e[0;31;49m", GREEN: "\e[0;32;49m", YELLOW: "\e[0;33;49m",
